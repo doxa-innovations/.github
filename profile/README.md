@@ -1,7 +1,9 @@
 <p align="center">
   <img src="/logo.png" alt="Doxa Innovations Logo" width="200"/>
 </p>
-# 📌 Doxa Innovations PLC
+<h1 align="center">
+  Doxa Innovations PLC
+</h1>
 
 **Doxa Innovations PLC** is a full-service, creative & software development studio based in Addis Ababa, Ethiopia. We partner with businesses to build strong, affordable brand identities and tailor-made digital solutions.
 
