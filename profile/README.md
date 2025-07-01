@@ -5,7 +5,7 @@
   Doxa Innovations PLC
 </h1>
 
-**Doxa Innovations PLC** is a full-service, creative & software development studio based in Addis Ababa, Ethiopia. We partner with businesses to build strong, affordable brand identities and tailor-made digital solutions.
+**Doxa Innovations PLC** is a full-service, creative & software development studio based in Addis Ababa and Bishoftu, Ethiopia. We partner with businesses to build strong, affordable brand identities and tailor-made digital solutions.
 
 ---
 
