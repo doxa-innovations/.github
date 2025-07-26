@@ -64,7 +64,7 @@ Some of our completed projects include:
 ## 📥 Get In Touch
 
 - 🌐 Website: [https://doxaplc.com](https://doxaplc.com)  
-- 📧 Email: info@doxaplc.com  
+- 📧 Email:doxainnovationsplc@gmail.com   
 - 💬 Telegram: [@doxaplc](https://t.me/doxaplc)
 
 ---
