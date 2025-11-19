@@ -46,8 +46,8 @@ Some of our completed projects include:
 
 ## 🤝 Meet the Team
 
-- **Gedion Girma** – Web Developer  
-- **Cherinet Demeke** – UI/UX Designer & Frontend  
+- **Gedion Girma** – Full Stack Developer
+- **Cherinet Demeke** – UI/UX Designer & Frontend Dev
 - **Ephrem Getachew** – Senior Software Engineer & Architect
 
 ---
