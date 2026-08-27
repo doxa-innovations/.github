@@ -1,0 +1,6 @@
+{
+  "name": "Doxa Staging Container",
+  "description": "Build an immutable staging image from the exact source SHA using centralized Infisical build ENV.",
+  "iconName": "octicon package",
+  "categories": ["Deployment", "Docker"]
+}
