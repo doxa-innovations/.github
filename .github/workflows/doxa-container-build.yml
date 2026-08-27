@@ -150,10 +150,12 @@ jobs:
 
       - name: Fetch build environment from Infisical using GitHub OIDC
         if: steps.existing.outputs.skip != 'true'
-        uses: Infisical/secrets-action@8a06c1bdcd5b8635d510c52d4b57a92c1ccef785
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995
         with:
           method: oidc
+          domain: https://app.infisical.com
           identity-id: ${{ inputs.infisical_identity_id }}
+          oidc-audience: https://github.com/doxa-innovations
           project-slug: ${{ inputs.infisical_project_slug }}
           env-slug: ${{ inputs.infisical_env_slug }}
           secret-path: ${{ inputs.infisical_secret_path }}
@@ -162,10 +164,12 @@ jobs:
 
       - name: Materialize legacy build .env when explicitly requested
         if: steps.existing.outputs.skip != 'true' && inputs.infisical_env_file_path != ''
-        uses: Infisical/secrets-action@8a06c1bdcd5b8635d510c52d4b57a92c1ccef785
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995
         with:
           method: oidc
+          domain: https://app.infisical.com
           identity-id: ${{ inputs.infisical_identity_id }}
+          oidc-audience: https://github.com/doxa-innovations
           project-slug: ${{ inputs.infisical_project_slug }}
           env-slug: ${{ inputs.infisical_env_slug }}
           secret-path: ${{ inputs.infisical_secret_path }}
