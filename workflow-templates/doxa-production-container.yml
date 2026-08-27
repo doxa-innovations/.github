@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   build:
-    uses: doxa-innovations/.github/.github/workflows/doxa-container-build.yml@stage18-infisical-env
+    uses: doxa-innovations/.github/.github/workflows/doxa-container-build.yml@main
     with:
       source_sha: ${{ inputs.sha }}
       environment: production
