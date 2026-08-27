@@ -1,0 +1,240 @@
+name: Doxa Container Build
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact 40-character source SHA to build
+        required: true
+        type: string
+      environment:
+        description: staging or production
+        required: true
+        type: string
+      image:
+        description: Full GHCR image repository, for example ghcr.io/doxa-innovations/my-app
+        required: true
+        type: string
+      infisical_identity_id:
+        description: Infisical OIDC machine identity ID (not secret)
+        required: true
+        type: string
+      infisical_project_slug:
+        description: Infisical project slug
+        required: true
+        type: string
+      infisical_env_slug:
+        description: Infisical environment slug
+        required: true
+        type: string
+      infisical_secret_path:
+        description: Infisical path exposed to the build job
+        required: false
+        default: /build
+        type: string
+      dockerfile:
+        description: Dockerfile path relative to repository root
+        required: false
+        default: Dockerfile
+        type: string
+      context:
+        description: Docker build context relative to repository root
+        required: false
+        default: .
+        type: string
+      pre_build_command:
+        description: Optional command run after ENV retrieval and before docker build
+        required: false
+        default: ""
+        type: string
+      infisical_env_file_path:
+        description: Optional relative .env path to materialize for legacy builds; leave empty unless the existing build requires a file
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: doxa-${{ inputs.environment }}-build-${{ github.repository }}
+  cancel-in-progress: ${{ inputs.environment == 'staging' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      RELEASE_ENV: ${{ inputs.environment }}
+      IMAGE: ${{ inputs.image }}
+      DOCKERFILE: ${{ inputs.dockerfile }}
+      BUILD_CONTEXT: ${{ inputs.context }}
+      LEGACY_ENV_FILE: ${{ inputs.infisical_env_file_path }}
+    steps:
+      - name: Validate immutable release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "source_sha must be exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          }
+          [[ "${RELEASE_ENV}" == "staging" || "${RELEASE_ENV}" == "production" ]] || {
+            echo "environment must be staging or production." >&2
+            exit 1
+          }
+          [[ "${IMAGE}" =~ ^ghcr\.io/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+            echo "image must be a GHCR repository such as ghcr.io/org/app." >&2
+            exit 1
+          }
+          if [[ -n "${LEGACY_ENV_FILE}" ]]; then
+            [[ "${LEGACY_ENV_FILE}" != /* && "${LEGACY_ENV_FILE}" != *".."* ]] || {
+              echo "infisical_env_file_path must stay inside the repository workspace." >&2
+              exit 1
+            }
+          fi
+
+      - name: Checkout the exact source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git fetch --depth=1 origin "${SOURCE_SHA}"
+          git checkout --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${SOURCE_SHA}" ]]
+          test -f "${DOCKERFILE}"
+
+      - name: Log in to GHCR
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Prove production SHA has a staging image
+        if: inputs.environment == 'production'
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGING_REF="${IMAGE}:staging-${SOURCE_SHA}"
+          docker pull --quiet "${STAGING_REF}" >/dev/null
+          REVISION="$(docker image inspect "${STAGING_REF}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          ENVIRONMENT="$(docker image inspect "${STAGING_REF}" --format '{{ index .Config.Labels "platform.doxa.io/environment" }}')"
+          [[ "${REVISION}" == "${SOURCE_SHA}" && "${ENVIRONMENT}" == "staging" ]] || {
+            echo "The requested source SHA does not have a valid Stage-18 staging image." >&2
+            exit 1
+          }
+          echo "Verified an immutable staging image exists for the requested source SHA."
+
+      - name: Stop if the immutable environment tag already exists safely
+        id: existing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${RELEASE_ENV}" == "production" ]]; then PREFIX=prod; else PREFIX=staging; fi
+          REF="${IMAGE}:${PREFIX}-${SOURCE_SHA}"
+          if docker pull --quiet "${REF}" >/dev/null 2>&1; then
+            REVISION="$(docker image inspect "${REF}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+            ENVIRONMENT="$(docker image inspect "${REF}" --format '{{ index .Config.Labels "platform.doxa.io/environment" }}')"
+            if [[ "${REVISION}" != "${SOURCE_SHA}" || "${ENVIRONMENT}" != "${RELEASE_ENV}" ]]; then
+              echo "Refusing to reuse ${REF}: provenance labels do not match the requested build." >&2
+              exit 1
+            fi
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+            echo "${REF} already exists with matching source/environment provenance; treating this run as idempotent."
+          else
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Fetch build environment from Infisical using GitHub OIDC
+        if: steps.existing.outputs.skip != 'true'
+        uses: Infisical/secrets-action@8a06c1bdcd5b8635d510c52d4b57a92c1ccef785
+        with:
+          method: oidc
+          identity-id: ${{ inputs.infisical_identity_id }}
+          project-slug: ${{ inputs.infisical_project_slug }}
+          env-slug: ${{ inputs.infisical_env_slug }}
+          secret-path: ${{ inputs.infisical_secret_path }}
+          include-imports: true
+          recursive: true
+
+      - name: Materialize legacy build .env when explicitly requested
+        if: steps.existing.outputs.skip != 'true' && inputs.infisical_env_file_path != ''
+        uses: Infisical/secrets-action@8a06c1bdcd5b8635d510c52d4b57a92c1ccef785
+        with:
+          method: oidc
+          identity-id: ${{ inputs.infisical_identity_id }}
+          project-slug: ${{ inputs.infisical_project_slug }}
+          env-slug: ${{ inputs.infisical_env_slug }}
+          secret-path: ${{ inputs.infisical_secret_path }}
+          include-imports: true
+          recursive: true
+          export-type: file
+          file-output-path: ${{ inputs.infisical_env_file_path }}
+
+      - name: Run optional deterministic pre-build command
+        if: steps.existing.outputs.skip != 'true' && inputs.pre_build_command != ''
+        shell: bash
+        env:
+          PRE_BUILD_COMMAND: ${{ inputs.pre_build_command }}
+        run: |
+          set -euo pipefail
+          bash -euo pipefail -c "${PRE_BUILD_COMMAND}"
+
+      - name: Build and push immutable environment image
+        if: steps.existing.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${RELEASE_ENV}" == "production" ]]; then PREFIX=prod; else PREFIX=staging; fi
+          TAG="${PREFIX}-${SOURCE_SHA}"
+          REF="${IMAGE}:${TAG}"
+
+          # Existing Dockerfiles keep working: every declared ARG whose name exists
+          # in the Infisical-provided job environment is forwarded automatically.
+          mapfile -t ARG_NAMES < <(
+            awk '
+              /^[[:space:]]*ARG[[:space:]]+/ {
+                line=$0
+                sub(/^[[:space:]]*ARG[[:space:]]+/, "", line)
+                sub(/[[:space:]#].*$/, "", line)
+                sub(/=.*/, "", line)
+                if (line ~ /^[A-Za-z_][A-Za-z0-9_]*$/) print line
+              }
+            ' "${DOCKERFILE}" | sort -u
+          )
+
+          BUILD_ARGS=()
+          for name in "${ARG_NAMES[@]}"; do
+            if [[ -v "${name}" ]]; then
+              BUILD_ARGS+=(--build-arg "${name}")
+              echo "Forwarding Infisical value to Docker ARG ${name}."
+            fi
+          done
+
+          docker build \
+            -f "${DOCKERFILE}" \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "platform.doxa.io/environment=${RELEASE_ENV}" \
+            --label "platform.doxa.io/release-tag=${TAG}" \
+            "${BUILD_ARGS[@]}" \
+            --tag "${REF}" \
+            "${BUILD_CONTEXT}"
+
+          docker push "${REF}"
+
+          docker pull --quiet "${REF}" >/dev/null
+          REVISION="$(docker image inspect "${REF}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          ENVIRONMENT="$(docker image inspect "${REF}" --format '{{ index .Config.Labels "platform.doxa.io/environment" }}')"
+          [[ "${REVISION}" == "${SOURCE_SHA}" && "${ENVIRONMENT}" == "${RELEASE_ENV}" ]]
+          echo "Published ${REF} from source ${SOURCE_SHA}."
+
+      - name: Remove temporary legacy ENV file
+        if: always() && inputs.infisical_env_file_path != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f -- "${LEGACY_ENV_FILE}"
