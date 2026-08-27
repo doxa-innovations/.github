@@ -1,0 +1,6 @@
+{
+  "name": "Doxa Production Container",
+  "description": "Rebuild the exact staging-tested source SHA with production Infisical ENV and publish prod-<SHA>.",
+  "iconName": "octicon package",
+  "categories": ["Deployment", "Docker"]
+}

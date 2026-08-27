@@ -1,0 +1,27 @@
+name: Doxa Staging Container
+
+on:
+  push:
+    branches:
+      - staging
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  build:
+    uses: doxa-innovations/.github/.github/workflows/doxa-container-build.yml@stage18-infisical-env
+    with:
+      source_sha: ${{ github.sha }}
+      environment: staging
+      image: ghcr.io/doxa-innovations/REPLACE_WITH_IMAGE_NAME
+      infisical_identity_id: REPLACE_WITH_INFISICAL_OIDC_IDENTITY_ID
+      infisical_project_slug: REPLACE_WITH_INFISICAL_PROJECT_SLUG
+      infisical_env_slug: staging
+      infisical_secret_path: /build
+      # Optional compatibility settings:
+      # pre_build_command: npm ci && npm test
+      # infisical_env_file_path: .env

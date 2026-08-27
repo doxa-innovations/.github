@@ -1,0 +1,29 @@
+name: Doxa Production Container
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full 40-character lowercase source SHA already tested in staging
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  build:
+    uses: doxa-innovations/.github/.github/workflows/doxa-container-build.yml@stage18-infisical-env
+    with:
+      source_sha: ${{ inputs.sha }}
+      environment: production
+      image: ghcr.io/doxa-innovations/REPLACE_WITH_IMAGE_NAME
+      infisical_identity_id: REPLACE_WITH_INFISICAL_OIDC_IDENTITY_ID
+      infisical_project_slug: REPLACE_WITH_INFISICAL_PROJECT_SLUG
+      infisical_env_slug: prod
+      infisical_secret_path: /build
+      # Optional compatibility settings:
+      # pre_build_command: npm ci && npm test
+      # infisical_env_file_path: .env
