@@ -15,17 +15,25 @@ on:
         description: Full GHCR image repository, for example ghcr.io/doxa-innovations/my-app
         required: true
         type: string
+      use_infisical:
+        description: Fetch build-time environment from Infisical using GitHub OIDC
+        required: false
+        default: true
+        type: boolean
       infisical_identity_id:
-        description: Infisical OIDC machine identity ID (not secret)
-        required: true
+        description: Infisical OIDC machine identity ID (not secret); required when use_infisical=true
+        required: false
+        default: ""
         type: string
       infisical_project_slug:
-        description: Infisical project slug
-        required: true
+        description: Infisical project slug; required when use_infisical=true
+        required: false
+        default: ""
         type: string
       infisical_env_slug:
-        description: Infisical environment slug
-        required: true
+        description: Infisical environment slug; required when use_infisical=true
+        required: false
+        default: ""
         type: string
       infisical_secret_path:
         description: Infisical path exposed to the build job
@@ -89,6 +97,23 @@ jobs:
             echo "image must be a GHCR repository such as ghcr.io/org/app." >&2
             exit 1
           }
+          if [[ "${{ inputs.use_infisical }}" == "true" ]]; then
+            [[ -n "${{ inputs.infisical_identity_id }}" ]] || {
+              echo "infisical_identity_id is required when use_infisical=true." >&2
+              exit 1
+            }
+            [[ -n "${{ inputs.infisical_project_slug }}" ]] || {
+              echo "infisical_project_slug is required when use_infisical=true." >&2
+              exit 1
+            }
+            [[ -n "${{ inputs.infisical_env_slug }}" ]] || {
+              echo "infisical_env_slug is required when use_infisical=true." >&2
+              exit 1
+            }
+          elif [[ -n "${LEGACY_ENV_FILE}" ]]; then
+            echo "infisical_env_file_path requires use_infisical=true." >&2
+            exit 1
+          fi
           if [[ -n "${LEGACY_ENV_FILE}" ]]; then
             [[ "${LEGACY_ENV_FILE}" != /* && "${LEGACY_ENV_FILE}" != *".."* ]] || {
               echo "infisical_env_file_path must stay inside the repository workspace." >&2
@@ -149,7 +174,7 @@ jobs:
           fi
 
       - name: Fetch build environment from Infisical using GitHub OIDC
-        if: steps.existing.outputs.skip != 'true'
+        if: steps.existing.outputs.skip != 'true' && inputs.use_infisical
         uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995
         with:
           method: oidc
@@ -163,7 +188,7 @@ jobs:
           recursive: true
 
       - name: Materialize legacy build .env when explicitly requested
-        if: steps.existing.outputs.skip != 'true' && inputs.infisical_env_file_path != ''
+        if: steps.existing.outputs.skip != 'true' && inputs.use_infisical && inputs.infisical_env_file_path != ''
         uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995
         with:
           method: oidc
