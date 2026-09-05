@@ -1,0 +1,190 @@
+name: Doxa Production Container Build
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact 40-character source SHA to build
+        required: true
+        type: string
+      image:
+        description: Full GHCR image repository, for example ghcr.io/doxa-innovations/my-app
+        required: true
+        type: string
+      use_infisical:
+        description: Fetch build-time environment from Infisical using GitHub OIDC
+        required: false
+        default: true
+        type: boolean
+      infisical_identity_id:
+        description: Infisical OIDC machine identity ID
+        required: false
+        default: ""
+        type: string
+      infisical_project_slug:
+        description: Infisical project slug
+        required: false
+        default: ""
+        type: string
+      infisical_env_slug:
+        description: Infisical environment slug
+        required: false
+        default: prod
+        type: string
+      infisical_secret_path:
+        description: Infisical path exposed to the build job
+        required: false
+        default: /build
+        type: string
+      dockerfile:
+        description: Dockerfile path relative to repository root
+        required: false
+        default: Dockerfile
+        type: string
+      context:
+        description: Docker build context relative to repository root
+        required: false
+        default: .
+        type: string
+      pre_build_command:
+        description: Optional deterministic command before docker build
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: doxa-production-build-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      IMAGE: ${{ inputs.image }}
+      DOCKERFILE: ${{ inputs.dockerfile }}
+      BUILD_CONTEXT: ${{ inputs.context }}
+    steps:
+      - name: Validate immutable production inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "source_sha must be exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          }
+          [[ "${IMAGE}" =~ ^ghcr\.io/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+            echo "image must be a GHCR repository such as ghcr.io/org/app." >&2
+            exit 1
+          }
+          if [[ "${{ inputs.use_infisical }}" == "true" ]]; then
+            [[ -n "${{ inputs.infisical_identity_id }}" ]]
+            [[ -n "${{ inputs.infisical_project_slug }}" ]]
+            [[ -n "${{ inputs.infisical_env_slug }}" ]]
+          fi
+
+      - name: Checkout exact source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git fetch --depth=1 origin "${SOURCE_SHA}"
+          git checkout --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${SOURCE_SHA}" ]]
+          test -f "${DOCKERFILE}"
+
+      - name: Log in to GHCR
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Stop if immutable production tag already exists safely
+        id: existing
+        shell: bash
+        run: |
+          set -euo pipefail
+          REF="${IMAGE}:prod-${SOURCE_SHA}"
+          if docker pull --quiet "${REF}" >/dev/null 2>&1; then
+            REVISION="$(docker image inspect "${REF}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+            ENVIRONMENT="$(docker image inspect "${REF}" --format '{{ index .Config.Labels "platform.doxa.io/environment" }}')"
+            [[ "${REVISION}" == "${SOURCE_SHA}" && "${ENVIRONMENT}" == "production" ]] || {
+              echo "Refusing to reuse ${REF}: provenance labels do not match." >&2
+              exit 1
+            }
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Fetch production build environment from Infisical
+        if: steps.existing.outputs.skip != 'true' && inputs.use_infisical
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995
+        with:
+          method: oidc
+          domain: https://app.infisical.com
+          identity-id: ${{ inputs.infisical_identity_id }}
+          oidc-audience: https://github.com/doxa-innovations
+          project-slug: ${{ inputs.infisical_project_slug }}
+          env-slug: ${{ inputs.infisical_env_slug }}
+          secret-path: ${{ inputs.infisical_secret_path }}
+          include-imports: true
+          recursive: true
+
+      - name: Run optional deterministic pre-build command
+        if: steps.existing.outputs.skip != 'true' && inputs.pre_build_command != ''
+        shell: bash
+        env:
+          PRE_BUILD_COMMAND: ${{ inputs.pre_build_command }}
+        run: |
+          set -euo pipefail
+          bash -euo pipefail -c "${PRE_BUILD_COMMAND}"
+
+      - name: Build and push immutable production image
+        if: steps.existing.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          REF="${IMAGE}:prod-${SOURCE_SHA}"
+
+          mapfile -t ARG_NAMES < <(
+            awk '
+              /^[[:space:]]*ARG[[:space:]]+/ {
+                line=$0
+                sub(/^[[:space:]]*ARG[[:space:]]+/, "", line)
+                sub(/[[:space:]#].*$/, "", line)
+                sub(/=.*/, "", line)
+                if (line ~ /^[A-Za-z_][A-Za-z0-9_]*$/) print line
+              }
+            ' "${DOCKERFILE}" | sort -u
+          )
+
+          BUILD_ARGS=()
+          for name in "${ARG_NAMES[@]}"; do
+            if [[ -v "${name}" ]]; then
+              BUILD_ARGS+=(--build-arg "${name}")
+            fi
+          done
+
+          docker build \
+            -f "${DOCKERFILE}" \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "platform.doxa.io/environment=production" \
+            --label "platform.doxa.io/release-tag=prod-${SOURCE_SHA}" \
+            "${BUILD_ARGS[@]}" \
+            --tag "${REF}" \
+            "${BUILD_CONTEXT}"
+
+          docker push "${REF}"
+
+          docker pull --quiet "${REF}" >/dev/null
+          REVISION="$(docker image inspect "${REF}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          ENVIRONMENT="$(docker image inspect "${REF}" --format '{{ index .Config.Labels "platform.doxa.io/environment" }}')"
+          [[ "${REVISION}" == "${SOURCE_SHA}" && "${ENVIRONMENT}" == "production" ]]
