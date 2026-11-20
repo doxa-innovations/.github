@@ -61,9 +61,9 @@ on:
         default: ""
         type: string
       runs_on:
-        description: 'JSON runner for the build job: "ubuntu-latest" (default) or ["self-hosted","Linux","X64"]'
+        description: 'Optional JSON runner override: "ubuntu-latest" or ["self-hosted","Linux","X64"]. Empty = self-hosted Doxa runner for private repositories, GitHub-hosted for public ones.'
         required: false
-        default: '"ubuntu-latest"'
+        default: ""
         type: string
 
 permissions:
@@ -77,7 +77,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    # Private repositories build on the Doxa runner (Sparky); the runner group refuses public repositories.
+    runs-on: ${{ fromJSON(inputs.runs_on != '' && inputs.runs_on || (github.event.repository.private && '["self-hosted","Linux","X64"]' || '"ubuntu-latest"')) }}
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
       RELEASE_ENV: ${{ inputs.environment }}
