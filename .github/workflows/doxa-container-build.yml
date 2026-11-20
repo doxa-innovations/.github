@@ -60,6 +60,11 @@ on:
         required: false
         default: ""
         type: string
+      runs_on:
+        description: 'JSON runner for the build job: "ubuntu-latest" (default) or ["self-hosted","Linux","X64"]'
+        required: false
+        default: '"ubuntu-latest"'
+        type: string
 
 permissions:
   contents: read
@@ -72,7 +77,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
       RELEASE_ENV: ${{ inputs.environment }}
