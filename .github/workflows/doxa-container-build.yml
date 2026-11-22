@@ -131,6 +131,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Sparky's runner service runs with UMask=0077; Docker COPY would then ship
+          # 700/600 files that the non-root app users cannot read. Share-readable checkout.
+          umask 022
           git init .
           git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
           git fetch --depth=1 origin "${SOURCE_SHA}"
